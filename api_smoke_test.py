@@ -35,7 +35,7 @@ def main() -> None:
         response = session.get(f"{base_url}{path}", params=params, timeout=args.timeout)
         try:
             payload = response.json()
-        except Exception:  # noqa: BLE001
+        except Exception:
             payload = {"raw": response.text}
         return response.status_code, payload
 

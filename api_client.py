@@ -54,7 +54,7 @@ def api_get(base_url: str, path: str, params: dict[str, Any] | None = None) -> A
 
     try:
         payload = response.json()
-    except Exception:  # noqa: BLE001
+    except Exception:
         payload = {"raw": response.text}
 
     if response.status_code >= 400:

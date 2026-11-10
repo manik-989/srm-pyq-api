@@ -6,6 +6,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api_server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -20,4 +21,6 @@ services:
       - key: R2_BUCKET
         sync: false
       - key: R2_PUBLIC_BASE_URL
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
         sync: false

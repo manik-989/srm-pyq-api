@@ -1,0 +1,30 @@
+name: Uptime
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub may delay scheduled runs during peak load.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    name: Production health check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check /health with retries
+        run: |
+          set -euo pipefail
+          URL="https://srm-pyq-api.onrender.com/health"
+          for attempt in 1 2 3; do
+            echo "Attempt ${attempt}..."
+            if curl -fsS --max-time 90 "$URL" | grep -q '"ok":true'; then
+              echo "API is healthy."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "API health check failed after 3 attempts."
+          exit 1

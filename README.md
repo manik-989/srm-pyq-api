@@ -15,6 +15,7 @@ This folder contains only the files needed to run and deploy the SRM Resources A
 ## API Endpoints
 
 - `GET /health`
+- `GET /ready`
 - `GET /v1/courses?q=&cursor=&limit=`
 - `GET /v1/courses/{course_code}`
 - `GET /v1/courses/{course_code}/papers?year=&term=&cursor=&limit=`
@@ -38,6 +39,20 @@ uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
 ```bash
 python api_smoke_test.py --base-url http://127.0.0.1:8000
 ```
+
+## DevOps
+
+- Install dev tools: `pip install -r requirements-dev.txt`
+- Lint and format: `ruff check . && ruff format --check .`
+- Tests: `pytest` (contract tests use an in-memory Supabase fake, so no credentials or network are required)
+- Coverage: `pytest --cov=api_server --cov-report=term-missing` (80% floor enforced)
+- Docker image: `docker build -t srm-pyq-api .`
+- Full stack: `docker compose up --build` from the workspace root
+- CI: `.github/workflows/ci.yml` runs lint, tests on Python 3.11-3.13, Docker build, and a Trivy image scan
+- Security: CodeQL (weekly), Dependabot (weekly), and an advisory `pip-audit` job
+- Probes: `/health` is liveness; `/ready` also checks Supabase connectivity
+
+See the workspace root `README.md` for the full DevOps guide.
 
 ## Deploy (Render / Railway / Fly / similar)
 

@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import boto3
 from botocore.client import Config as BotoConfig
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from postgrest.exceptions import APIError
 from supabase import create_client
@@ -49,6 +52,7 @@ def get_env_list(*keys: str) -> list[str]:
     if not raw:
         return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
 
 load_env_file(Path(".env"))
 
@@ -124,7 +128,10 @@ def get_r2_client() -> Any:
     )
 
 
-app = FastAPI(title="SRM PYQ API", version="1.0.0")
+SERVICE_NAME = "srm-pyq-api"
+SERVICE_VERSION = "1.0.0"
+
+app = FastAPI(title="SRM PYQ API", version=SERVICE_VERSION)
 
 cors_origins = get_env_list("CORS_ALLOW_ORIGINS") or [
     "https://srm-pyq-explorer.vercel.app",
@@ -135,7 +142,39 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next: Any) -> Any:
+    """Attach a request id and emit one structured access log per request."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    started_at = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logging.exception(
+            "Unhandled request error | method=%s path=%s request_id=%s",
+            request.method,
+            request.url.path,
+            request_id,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    response.headers["X-Request-ID"] = request_id
+    logging.info(
+        "request method=%s path=%s status=%s duration_ms=%.1f request_id=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+        request_id,
+    )
+    return response
 
 
 def normalize_metadata(metadata_json: Any) -> dict[str, Any] | None:
@@ -158,7 +197,19 @@ def normalize_metadata(metadata_json: Any) -> dict[str, Any] | None:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True}
+    """Liveness probe: the process is up and serving requests."""
+    return {"ok": True, "service": SERVICE_NAME, "version": SERVICE_VERSION}
+
+
+@app.get("/ready")
+def ready() -> dict[str, Any]:
+    """Readiness probe: dependencies needed to serve traffic are reachable."""
+    try:
+        supabase.table("courses").select("id").limit(1).execute()
+    except Exception as exc:
+        logging.warning("Readiness check failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Database is not ready") from exc
+    return {"ok": True, "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
 
 @app.get("/v1/courses")
@@ -173,9 +224,7 @@ def list_courses(
     if q:
         escaped = q.replace(",", " ")
         search_filter = (
-            f"course_code.ilike.%{escaped}%,"
-            f"course_name.ilike.%{escaped}%,"
-            f"course_abbreviation.ilike.%{escaped}%"
+            f"course_code.ilike.%{escaped}%,course_name.ilike.%{escaped}%,course_abbreviation.ilike.%{escaped}%"
         )
         query = query.or_(search_filter)
 
@@ -214,13 +263,7 @@ def list_courses(
 
 
 def fetch_course_by_code(course_code: str) -> dict[str, Any]:
-    response = (
-        supabase.table("courses")
-        .select(COURSE_FIELDS)
-        .eq("course_code", course_code)
-        .limit(1)
-        .execute()
-    )
+    response = supabase.table("courses").select(COURSE_FIELDS).eq("course_code", course_code).limit(1).execute()
     rows = response.data or []
     if not rows:
         raise HTTPException(status_code=404, detail=f"Course not found: {course_code}")
@@ -293,13 +336,7 @@ def get_paper(paper_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Paper not found: {paper_id}")
 
     paper = papers[0]
-    course = (
-        supabase.table("courses")
-        .select(COURSE_MIN_FIELDS)
-        .eq("id", paper["course_id"])
-        .limit(1)
-        .execute()
-    )
+    course = supabase.table("courses").select(COURSE_MIN_FIELDS).eq("id", paper["course_id"]).limit(1).execute()
     course_rows = course.data or []
 
     paper_out = {k: v for k, v in paper.items() if k != "metadata_json"}
@@ -328,9 +365,7 @@ def list_paper_files(paper_id: str) -> dict[str, Any]:
 def get_file_download(file_id: str, ttl_seconds: int = Query(default=900, ge=60, le=3600)) -> dict[str, Any]:
     response = (
         supabase.table("paper_files")
-        .select(
-            "id,bucket,object_key,public_url,mime_type,size_bytes,source_pdf_url"
-        )
+        .select("id,bucket,object_key,public_url,mime_type,size_bytes,source_pdf_url")
         .eq("id", file_id)
         .limit(1)
         .execute()
@@ -363,7 +398,7 @@ def get_file_download(file_id: str, ttl_seconds: int = Query(default=900, ge=60,
             },
             ExpiresIn=ttl_seconds,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not generate signed URL: {exc}") from exc
 
     return {
