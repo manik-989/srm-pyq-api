@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from postgrest.exceptions import APIError
+from prometheus_fastapi_instrumentator import Instrumentator
 from supabase import create_client
 
 
@@ -145,6 +146,10 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Prometheus metrics: exposes request counts, latency histograms and in-flight
+# requests at /metrics for a Prometheus server to scrape.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 @app.middleware("http")

@@ -69,6 +69,14 @@ def test_health_returns_service_metadata(client: Any) -> None:
     assert body["version"] == api_server.SERVICE_VERSION
 
 
+def test_metrics_endpoint_exposes_prometheus_format(client: Any) -> None:
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "python_info" in response.text
+
+
 def test_request_id_is_echoed(client: Any) -> None:
     response = client.get("/health", headers={"x-request-id": "req-123"})
 
