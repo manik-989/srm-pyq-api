@@ -9,6 +9,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Apply available security fixes for packages already in the base image.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
 # Run as an unprivileged user.
 RUN groupadd --system app && useradd --system --gid app --create-home app
 
